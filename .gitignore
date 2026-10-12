@@ -1,0 +1,11 @@
+.runtime/
+.vendor/
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+*.log
+.tools/

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="console-token" content="__CONSOLE_TOKEN__">
+  <meta name="description" content="基于本机 garak 的网页 AI 安全检测工作台">
+  <title>Garak Web Guard · 网页 AI 安全检测</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="Garak Web Guard 首页"><span class="brand-mark">g<span>↗</span></span><span>Web Guard<small>POWERED BY GARAK</small></span></a>
+    <div class="nav-label">工作空间</div>
+    <nav aria-label="主导航">
+      <button class="nav-button selected" data-view="workspace"><span>◈</span>检测工作台</button>
+      <button class="nav-button" data-view="history"><span>◷</span>历史报告 <span id="history-count" class="count">0</span></button>
+      <button class="nav-button" data-view="guide"><span>☷</span>使用说明</button>
+    </nav>
+    <div class="sidebar-note"><span class="mini-orbit">◎</span><strong>在本机运行</strong><p>用独立浏览器保留登录状态。测试记录与报告保存在当前项目。</p><div class="tiny-status"><i></i> localhost workspace</div></div>
+    <div class="engine"><span class="engine-icon">⌘</span><div><strong id="engine-version">检查 garak…</strong><small id="engine-location">本地检测引擎</small></div><i id="engine-dot" class="status-dot"></i></div>
+  </aside>
+  <main>
+    <header class="topbar"><div><span class="breadcrumb">工作空间</span><span class="slash">/</span><strong id="view-title">检测工作台</strong></div><span class="local-badge"><i></i> LOCAL ONLY</span></header>
+    <section id="workspace-view" class="view">
+      <div class="page-intro"><div><div class="eyebrow">AI SAFETY WORKSPACE</div><h1>检查 AI 的安全边界<span class="title-dot">.</span></h1><p>连接聊天网页，让 garak 检测问题、收集回答并记录风险信号。</p></div><button id="demo-button" class="button subtle browser-action">体验本地演示 <span>↗</span></button></div>
+      <div class="metrics">
+        <div class="metric"><div class="metric-label">已判定测试 <span>◈</span></div><div class="metric-value" id="metric-tested">—</div><small id="metric-status">创建检测后显示</small></div>
+        <div class="metric"><div class="metric-label">疑似风险 <span>◎</span></div><div class="metric-value" id="metric-flagged">—</div><small>检测器命中，需要人工复核</small></div>
+        <div class="metric"><div class="metric-label">连接错误 <span>⌁</span></div><div class="metric-value" id="metric-errors">—</div><small>超时或连接失败单独记录</small></div>
+      </div>
+      <div class="setup-grid">
+        <section class="panel target-panel">
+          <div class="panel-heading"><div><span class="step">01</span><h2>连接网页 AI</h2></div><span id="browser-badge" class="badge muted">浏览器未打开</span></div>
+          <p class="panel-description">先在独立浏览器里登录，再选择聊天页面的输入框和回答区域。</p>
+          <form id="target-form">
+            <div class="form-row target-url-row"><label>目标名称<input id="target-name" type="text" maxlength="100" value="我的网页 AI" placeholder="例如：客服助手"></label><label>浏览器<select id="channel"><option value="msedge">Microsoft Edge</option><option value="chrome">Google Chrome</option><option value="chromium">Playwright Chromium</option></select></label></div>
+            <label class="full-label">聊天网页地址 <span class="required">*</span><input id="target-url" type="url" placeholder="https://你的 AI 网站/chat" autocomplete="off" required></label>
+            <div class="connection-actions"><button type="button" id="open-browser" class="button dark browser-action"><span>↗</span>打开浏览器并登录</button><button type="button" id="inspect-button" class="button outline browser-action">检查选择器</button><button type="button" id="test-button" class="button outline browser-action">连接测试</button></div>
+            <div id="connection-result" class="inline-result" hidden role="status"></div>
+            <div class="divider"></div>
+            <div class="section-caption"><strong>页面元素</strong><span>填写 CSS 选择器，或在浏览器中点选</span></div>
+            <div class="form-row selectors-row"><label>输入框 <span class="required">*</span><div class="input-with-button"><input id="input-selector" class="code-input" type="text" spellcheck="false"><button type="button" class="pick browser-action" data-kind="input" aria-label="点选输入框">⌖ 点选</button></div></label><label>AI 回答区域 <span class="required">*</span><div class="input-with-button"><input id="response-selector" class="code-input" type="text" spellcheck="false"><button type="button" class="pick browser-action" data-kind="response" aria-label="点选回答区域">⌖ 点选</button></div></label></div>
+            <p class="field-hint">回答区域只匹配 AI 的回答。点选前可先手动聊一句，生成一个回答气泡。</p>
+            <div class="form-row selectors-row"><label>发送按钮 <span class="optional">留空使用 Enter</span><div class="input-with-button"><input id="send-selector" class="code-input" type="text" placeholder="button[type=submit]" spellcheck="false"><button type="button" class="pick browser-action" data-kind="send" aria-label="点选发送按钮">⌖ 点选</button></div></label><label>新对话按钮 <span class="optional">建议配置</span><div class="input-with-button"><input id="new-chat-selector" class="code-input" type="text" placeholder="新建对话按钮的选择器" spellcheck="false"><button type="button" class="pick browser-action" data-kind="new_chat" aria-label="点选新对话按钮">⌖ 点选</button></div></label></div>
+            <label class="checkline"><input id="reset-each" type="checkbox"><span>每个问题使用新对话，减少前文对结果的影响</span></label>
+            <details class="advanced"><summary>等待时间与高级配置 <span>＋</span></summary><div class="advanced-body"><div class="form-row"><label>回答超时 / 秒<input id="timeout" type="number" min="10" max="600" value="120"></label><label>每题间隔 / 秒<input id="delay" type="number" min="0" max="60" step="0.5" value="2"></label><label>文本稳定 / 毫秒<input id="stable" type="number" min="500" max="20000" value="2500"></label></div><div class="form-row"><label>最短等待 / 毫秒<input id="min-response" type="number" min="500" max="30000" value="3500"></label><label>iframe 选择器<input id="frame-selector" class="code-input" type="text" placeholder="仅嵌入式聊天需要" spellcheck="false"></label></div><label>生成中按钮 / 状态选择器<input id="busy-selector" class="code-input" type="text" spellcheck="false"></label><p class="field-hint">优先配置生成中状态。没有状态标记时以文本稳定判断完成；流式回答暂停较长时，请增加稳定时间。</p></div></details>
+            <button type="submit" id="save-target" class="text-button">保存目标配置 <span>→</span></button>
+          </form>
+        </section>
+        <section class="panel probe-panel">
+          <div class="panel-heading"><div><span class="step">02</span><h2>选择检测范围</h2></div></div>
+          <p class="panel-description">使用本机 garak 探针，按组抽样检测。</p>
+          <div id="probe-options" class="probe-options"></div>
+          <label class="cap-label">每组最多测试<select id="max-per-probe"><option value="1">1 个问题 · 快速连通验证</option><option value="5" selected>5 个问题 · 轻量抽样</option><option value="10">10 个问题 · 标准抽样</option><option value="20">20 个问题 · 扩大抽样</option><option value="30">30 个问题 · 扩大抽样</option></select></label>
+          <div class="scope-note"><span>⌁</span><p>内置探针以英文为主。未命中不代表系统整体安全，命中记录需要人工复核。</p></div>
+          <div class="scan-footer"><div><span>单次测试上限</span><strong id="estimate">15 个问题</strong></div><button id="start-scan" class="button mint"><span>▷</span>开始安全检测</button><button id="stop-scan" class="button danger" hidden>停止检测</button></div>
+        </section>
+      </div>
+      <section class="panel results-panel">
+        <div class="panel-heading"><div><span class="step">03</span><h2>检测记录</h2><span id="job-badge" class="badge muted">等待开始</span></div><div class="download-actions"><button class="text-button download" data-type="html" disabled>导出 HTML ↗</button><button class="text-button download" data-type="json" disabled>JSON</button><button class="text-button download" data-type="jsonl" disabled>garak 原始记录</button></div></div>
+        <div id="job-info" class="job-info" hidden></div>
+        <div class="result-tabs"><button class="result-tab selected" data-tab="results">问题与回答</button><button class="result-tab" data-tab="logs">运行日志</button><span id="rate-note"></span></div>
+        <div id="results-content"><div class="empty-state"><div class="empty-icon">◎</div><strong>每个信号，都有原始回答可追溯</strong><p>完成网页登录和连接测试后，开始第一轮安全检测。</p><div class="empty-chips"><span>原始问题</span><span>网页回答</span><span>检测器分值</span></div></div></div>
+        <pre id="logs-content" class="logs-content" hidden>暂无运行日志。</pre>
+      </section>
+    </section>
+    <section id="history-view" class="view" hidden><div class="page-intro"><div><div class="eyebrow">SCAN ARCHIVE</div><h1>历史报告<span class="title-dot">.</span></h1><p>查看本机保存的检测记录，打开原始问题与回答。</p></div></div><section class="panel"><div id="history-list" class="history-list"></div></section></section>
+    <section id="guide-view" class="view" hidden><div class="page-intro"><div><div class="eyebrow">GETTING STARTED</div><h1>从登录到报告<span class="title-dot">.</span></h1><p>一次配置，重复检测。</p></div></div><section class="panel guide-panel"><ol><li><strong>打开独立浏览器并登录</strong><p>填写聊天网页地址，点击“打开浏览器并登录”。在新窗口手动完成登录，进入可聊天的页面。</p></li><li><strong>配置网页元素</strong><p>手动发送一句话，使 AI 回答区域出现。点击控制台里的“点选”，切换到浏览器，点击对应元素。回答区域应覆盖整个回答，并匹配后续新回答。点选结果如果包含固定 nth-of-type，建议改为重复回答元素的通用 class 或 data 属性。嵌入 iframe 的聊天请配置 iframe 和内部 CSS 选择器。</p></li><li><strong>验证连接</strong><p>“检查选择器”验证元素是否存在。“连接测试”只发送“请只回复：连接成功”，不执行安全探针。确认返回完整的新回答后再开始检测。流式页面建议配置“生成中按钮 / 状态选择器”。</p></li><li><strong>选择探针并检测</strong><p>建议先选 1–5 个问题。每组数量是上限，部分探针自身问题更少。建议配置新对话按钮，并启用每题新对话。连续对话的前文会影响后续测试，报告会记录此设置。</p></li><li><strong>复核风险与导出</strong><p>命中记录显示问题、回答和 garak 检测器分值。检测器分值不是漏洞概率；关键词命中可能误报。HTML 报告可独立打开，JSON 可用于后续分析，JSONL 保留 garak 原始数据。训练文本复现探针不检测系统提示词或私人账号数据泄漏。</p></li></ol><div class="guide-footnote">本地模拟网页用于验证操作流程和检测链路。模拟结果不代表任何真实 AI 产品的安全水平。停止检测会停止后续问题，网页中已开始的生成可能仍需手动停止。登录配置目录和报告可能含敏感信息，请妥善保管。</div></section></section>
+    <footer class="page-footer"><span>Garak Web Guard</span><span>本地检测 · 可复核记录 · 原始报告</span></footer>
+  </main>
+  <div id="toast" class="toast" hidden role="alert"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>
