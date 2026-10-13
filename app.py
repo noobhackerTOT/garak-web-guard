@@ -61,7 +61,7 @@ class Console:
         target_file = self.storage / "target.json"
         if target_file.exists():
             try:
-                self.saved_target = json.loads(target_file.read_text(encoding="utf-8"))
+                self.saved_target.update(json.loads(target_file.read_text(encoding="utf-8")))
             except (ValueError, OSError):
                 pass
         for path in self.runs.glob("*/job.json"):
@@ -119,7 +119,8 @@ class Console:
             with self.lock:
                 if self.active:
                     raise ValueError("已有检测正在运行")
-            if self.browser.target is None or self.browser.target["url"] != config["target"]["url"]:
+            if self.browser.target is None or any(self.browser.target.get(k) != config["target"][k]
+                    for k in ("url", "channel", "browser_mode")):
                 raise ValueError("请先为当前网址打开登录浏览器")
             inspection = self.browser.call("inspect", config["target"])
             if not inspection["selectors"]["input_selector"]["visible"]:
@@ -402,10 +403,20 @@ class Handler(BaseHTTPRequestHandler):
                 self.console.save_target(target)
             elif path == "/api/browser/inspect":
                 result = self.console.browser_action("inspect", validate_target(data))
+            elif path == "/api/browser/reveal":
+                result = self.console.browser_action("reveal", validate_target(data))
+            elif path == "/api/browser/discover":
+                result = self.console.browser_action("discover")
             elif path == "/api/browser/test":
                 target = validate_target(data.get("target"))
                 # Transport check deliberately sends a harmless prompt.
-                result = {"response": self.console.browser_action("generate", target, "请只回复：连接成功"), "security_scan": False}
+                result = {"response": self.console.browser_action("generate", target, "请只回复：连接成功", "连接成功"),
+                          "detected_selector": self.console.browser.status()["detected_selector"], "security_scan": False}
+            elif path == "/api/browser/cancel":
+                if self.console.active:
+                    raise ValueError("正在安全检测，请使用停止检测")
+                self.console.browser.cancel.set()
+                result = {"cancel_requested": True}
             elif path == "/api/browser/pick":
                 result = self.console.browser_action("pick", data.get("kind"))
             elif path == "/api/browser/pick-result":

@@ -1,5 +1,7 @@
 """Real Edge + real installed garak against a local, deterministic chat fixture."""
 import sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import bootstrap
@@ -14,6 +16,7 @@ import urllib.error
 from app import Console, Handler, ThreadingHTTPServer, TERMINAL
 from settings import DEFAULT_TARGET
 from playwright.sync_api import sync_playwright
+from browser_launch import launch_standard
 
 
 def main():
@@ -31,8 +34,14 @@ def main():
     def request(path,data=None,headers=None):
         req=urllib.request.Request(base+path,data=None if data is None else json.dumps(data).encode(),
             headers={"X-Console-Token":console.token,"Content-Type":"application/json",**(headers or {})})
-        with opener.open(req,timeout=180) as response:
-            return json.load(response)
+        for retry in range(3):
+            try:
+                with opener.open(req,timeout=180) as response:
+                    return json.load(response)
+            except ConnectionAbortedError:
+                if retry==2:
+                    raise
+                time.sleep(.15)
     def wait(job_id,timeout=120):
         deadline=time.monotonic()+timeout
         while time.monotonic()<deadline:
@@ -49,15 +58,17 @@ def main():
             print('\n'.join(result['job']['logs'][-12:]),flush=True)
         return result
     target={**DEFAULT_TARGET,"name":"QA 本地模拟网页","url":base+'/demo?vulnerable=1',
+        "response_mode":"auto",
         "input_selector":"#chat-input","response_selector":".assistant-message","send_selector":"#send-button",
         "new_chat_selector":"#new-chat","busy_selector":"#stop-button","reset_each_prompt":True,
         "timeout_s":15,"stable_ms":500,"min_response_ms":700,"delay_s":0}
     artifacts=bootstrap.RUNTIME / "qa"
     artifacts.mkdir(exist_ok=True,parents=True)
     errors=[]
+    qa_process=None
     try:
         with sync_playwright() as p:
-            qa=p.chromium.launch(channel='msedge',headless=True)
+            qa, _, qa_process=launch_standard(p,'msedge',qa_storage/'dashboard-profile',headless=True)
             page=qa.new_page(viewport={"width":1440,"height":1100},device_scale_factor=1)
             page.on('pageerror',lambda exc:errors.append(str(exc)))
             page.goto(base)
@@ -77,7 +88,8 @@ def main():
             console.browser._qa_click=lambda: console.browser.page.locator('#chat-input').click()
             console.browser.call('qa_click')
             picked=request('/api/browser/pick-result',{})
-            assert picked['selector']=='#chat-input',picked
+            picked_input=request('/api/browser/inspect',{**target,'input_selector':picked['selector']})
+            assert picked['tag']=='TEXTAREA' and picked_input['selectors']['input_selector']['visible']==1,picked
             print('PASS login browser, streamed transport, picker, desktop/mobile UI',flush=True)
 
             probes=["promptinject.HijackHateHumans","dan.Dan_11_0","encoding.InjectBase64","leakreplay.LiteratureComplete"]
@@ -102,7 +114,7 @@ def main():
             assert safe['job']['answered']==2
             print('PASS real garak signals, cap, clean fixture, repeated identical responses, report download',flush=True)
 
-            bad={**target,"response_selector":".missing-answer","timeout_s":10}
+            bad={**target,"response_mode":"selector","response_selector":".missing-answer","timeout_s":10}
             failed=scan(bad,["dan.Dan_11_0"])
             assert failed['job']['status']=='failed' and failed['job']['errors']==1,failed
             assert failed['summary']['evaluated']==0 and failed['summary']['no_signal_rate'] is None
@@ -138,6 +150,9 @@ def main():
             page.locator('details.advanced > summary').click()
             page.locator('#busy-selector').fill('#stop-button')
             page.locator('#reset-each').uncheck()
+            page.locator('#discover-button').click()
+            page.wait_for_function("document.querySelector('#discovery-result').textContent.includes('消息')")
+            assert page.locator('.discovery-choice').count()>=1
             page.locator('#stable').fill('500');page.locator('#min-response').fill('700');page.locator('#delay').fill('0')
             page.locator('#test-button').click()
             page.wait_for_function("document.querySelector('#connection-result').textContent.includes('收到网页回答')",timeout=30000)
@@ -146,10 +161,13 @@ def main():
             page.locator('.open-job').first.click()
             assert page.locator('#workspace-view').is_visible()
             assert not errors,errors
+            qa.new_browser_cdp_session().send('Browser.close')
             qa.close()
             (artifacts/'verification.json').write_text(json.dumps({"passed":True,"garak_version":console.garak_version,"browser":"Microsoft Edge","vulnerable_job":vulnerable['job']['id'],"safe_job":safe['job']['id'],"failed_job":failed['job']['id'],"cancelled_job":stopped['job']['id'],"javascript_errors":errors},ensure_ascii=False,indent=2),encoding='utf-8')
             print('PASS frontend connection action/history and zero JavaScript errors',flush=True)
     finally:
+        if qa_process and qa_process.poll() is None:
+            qa_process.terminate()
         if console.active:
             console.stop(console.active)
             time.sleep(1)

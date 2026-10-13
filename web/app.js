@@ -3,9 +3,9 @@ const $ = id => document.getElementById(id);
 const token = document.querySelector('meta[name="console-token"]').content;
 const terminal = new Set(['completed','failed','cancelled','interrupted']);
 const statuses = {preparing:'准备中',running:'检测中',stopping:'停止中',completed:'已完成',failed:'检测未完成',cancelled:'已停止',interrupted:'上次运行中断'};
-const selectorFields = {input:'input-selector',response:'response-selector',send:'send-selector',new_chat:'new-chat-selector',busy:'busy-selector'};
+const selectorFields = {input:'input-selector',response:'response-selector',send:'send-selector',new_chat:'new-chat-selector',busy:'busy-selector',launcher:'launcher-selector'};
 let state = null, selectedJob = null, busyCount = 0, polling = false, initialized = false, selectedTab = 'results';
-let toastTimer, pickTimer, pickStarted = 0, lastDetail = null;
+let toastTimer, pickTimer, pickStarted = 0, lastDetail = null, testRunning = false;
 const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 async function api(path, data) {
@@ -22,15 +22,16 @@ function connection(message,error=false) {
   $('connection-result').hidden=false; $('connection-result').textContent=message; $('connection-result').classList.toggle('error',error);
 }
 function target() {
-  return {name:$('target-name').value,url:$('target-url').value,channel:$('channel').value,
-    input_selector:$('input-selector').value,response_selector:$('response-selector').value,
+  return {name:$('target-name').value,url:$('target-url').value,channel:$('channel').value,browser_mode:$('browser-mode').value,
+    input_selector:$('input-selector').value,response_selector:$('response-selector').value,response_mode:$('response-mode').value,
     send_selector:$('send-selector').value,new_chat_selector:$('new-chat-selector').value,
     busy_selector:$('busy-selector').value,frame_selector:$('frame-selector').value,
+    launcher_selector:$('launcher-selector').value,launcher_frame_selector:$('launcher-frame-selector').value,
     reset_each_prompt:$('reset-each').checked,timeout_s:Number($('timeout').value),
     stable_ms:Number($('stable').value),min_response_ms:Number($('min-response').value),delay_s:Number($('delay').value)};
 }
 function fillTarget(t) {
-  const map = {name:'target-name',url:'target-url',channel:'channel',input_selector:'input-selector',response_selector:'response-selector',send_selector:'send-selector',new_chat_selector:'new-chat-selector',busy_selector:'busy-selector',frame_selector:'frame-selector',timeout_s:'timeout',stable_ms:'stable',min_response_ms:'min-response',delay_s:'delay'};
+  const map = {name:'target-name',url:'target-url',channel:'channel',browser_mode:'browser-mode',input_selector:'input-selector',response_selector:'response-selector',response_mode:'response-mode',send_selector:'send-selector',new_chat_selector:'new-chat-selector',busy_selector:'busy-selector',frame_selector:'frame-selector',launcher_selector:'launcher-selector',launcher_frame_selector:'launcher-frame-selector',timeout_s:'timeout',stable_ms:'stable',min_response_ms:'min-response',delay_s:'delay'};
   for (const [key,id] of Object.entries(map)) if (t[key]!==undefined) $(id).value=t[key];
   $('reset-each').checked=Boolean(t.reset_each_prompt);
 }
@@ -43,6 +44,7 @@ function controls() {
   $('start-scan').hidden=active; $('stop-scan').hidden=!active;
   $('stop-scan').disabled=state?.jobs.find(j=>j.id===state.active_job)?.status==='stopping';
   $('save-target').disabled=active||busyCount>0;
+  $('cancel-test').hidden=!testRunning;
   const job=lastDetail?.job;
   document.querySelectorAll('.download').forEach(b=>b.disabled=!job||!terminal.has(job.status));
 }
@@ -102,14 +104,25 @@ async function poll() {
     $('browser-badge').className='badge '+(state.browser.open?'ready':'muted');
     $('browser-badge').textContent=state.browser.busy?'浏览器操作中':state.browser.open?'浏览器已打开':'浏览器未打开';
     $('browser-badge').title=state.browser.url||'';
+    if(testRunning&&state.browser.busy&&state.browser.phase)connection(`${state.browser.phase} · ${state.browser.elapsed_s} 秒 / ${Number($('timeout').value)} 秒\n当前找到 ${state.browser.answer_candidates} 个回答候选。可以取消后重新点选回答区域。`);
     if(state.active_job&&!selectedJob)selectedJob=state.active_job;
     renderHistory();await refreshDetail();controls();
   } catch(e){if(!initialized)toast('无法连接本地服务：'+e.message,true);}finally{polling=false;}
 }
 
 $('open-browser').addEventListener('click',e=>action(e.currentTarget,async()=>{const s=await api('/api/browser/open',target());connection('浏览器已打开。请在新窗口完成登录并进入聊天页面，然后检查选择器。\n当前地址：'+s.url);toast('请在独立浏览器窗口完成登录');}));
-$('inspect-button').addEventListener('click',e=>action(e.currentTarget,async()=>{const result=await api('/api/browser/inspect',target());const labels={input_selector:'输入框',response_selector:'AI 回答区域',send_selector:'发送按钮',new_chat_selector:'新对话按钮',busy_selector:'生成中状态'};connection(Object.entries(result.selectors).map(([k,v])=>`${labels[k]}：${v.configured?`匹配 ${v.count} 个 / 可见 ${v.visible} 个`:'未配置'}`).join('\n'));}));
-$('test-button').addEventListener('click',e=>action(e.currentTarget,async()=>{connection('正在发送连接测试，等待新的完整回答…');const result=await api('/api/browser/test',{target:target()});connection('收到网页回答：\n'+result.response);toast('已成功发送问题并读取网页回答');}));
+$('discover-button').addEventListener('click',e=>action(e.currentTarget,async()=>{
+  const result=await api('/api/browser/discover',{}), box=$('discovery-result');box.hidden=false;
+  const choose=c=>{ $('input-selector').value=c.input_selector;$('frame-selector').value=c.frame_selector;$('send-selector').value=c.send_selector||'';$('response-mode').value='auto';$('response-selector').value=c.response_selector||'';connection('已定位候选对话：'+c.label+'\n所属页面：'+(c.frame_selector||'主页面')+'\n请做连接测试，确认读取的是新的完整 AI 回答。');};
+  box.innerHTML='<strong>候选对话区</strong>'+(!result.candidates.length?'<p>未找到可用输入框。先展开助手、完成登录，或使用点选。</p>':result.candidates.map((c,i)=>`<button type="button" class="discovery-choice" data-candidate="${i}"><b>${esc(c.label)}</b><small>${c.visible?'可见':'可能折叠或在屏幕外'} · ${esc(c.frame_selector||'主页面')} · ${esc(c.input_selector)}</small></button>`).join(''))+(result.launchers.length?'<strong>可能的助手入口</strong>'+result.launchers.map((c,i)=>`<button type="button" class="discovery-choice" data-launcher="${i}"><b>${esc(c.label)}</b><small>${esc(c.launcher_frame_selector||'主页面')}</small></button>`).join(''):'');
+  box.querySelectorAll('[data-candidate]').forEach(b=>b.addEventListener('click',()=>choose(result.candidates[Number(b.dataset.candidate)])));
+  box.querySelectorAll('[data-launcher]').forEach(b=>b.addEventListener('click',()=>{const c=result.launchers[Number(b.dataset.launcher)];$('launcher-selector').value=c.launcher_selector;$('launcher-frame-selector').value=c.launcher_frame_selector;connection('已选助手入口。点击“展开助手”，再定位对话区。');}));
+  if(result.candidates.length===1&&result.candidates[0].visible)choose(result.candidates[0]);else connection('找到 '+result.candidates.length+' 个候选对话区。请从列表选择，再做连接测试。');
+}));
+$('inspect-button').addEventListener('click',e=>action(e.currentTarget,async()=>{const result=await api('/api/browser/inspect',target());const labels={input_selector:'输入框',response_selector:'AI 回答区域',send_selector:'发送按钮',new_chat_selector:'新对话按钮',busy_selector:'生成中状态'};const lines=Object.entries(result.selectors).map(([k,v])=>`${labels[k]}：${v.configured?`匹配 ${v.count} 个 / 可见 ${v.visible} 个`:'未配置'}`);if(result.answer_candidates!==null)lines.push('自动模式找到 '+result.answer_candidates+' 个候选回答区域；新对话可先做连接测试。');if(!result.chat_visible)lines.push('输入框未在当前可见区域内。浮动助手请配置入口，并确认已登录。');if(result.frames.length)lines.push('发现 iframe（点选内部元素会自动填写所属 iframe）：\n'+result.frames.map(f=>f.selector).join('\n'));connection(lines.join('\n'));}));
+$('reveal-button').addEventListener('click',e=>action(e.currentTarget,async()=>{if(!$('launcher-selector').value.trim())throw new Error('请先点选或填写助手入口');await api('/api/browser/reveal',target());connection('已检查并展开助手。可以点选输入框和回答区域。');}));
+$('test-button').addEventListener('click',e=>action(e.currentTarget,async()=>{testRunning=true;controls();connection('正在发送连接测试，等待新的完整回答…');try{const result=await api('/api/browser/test',{target:target()});let extra='';if($('response-mode').value==='auto'&&result.detected_selector){$('response-selector').value=result.detected_selector;extra='\n自动识别的回答选择器：'+result.detected_selector+'\n正式检测前请确认该区域包含完整回答。';}connection('收到网页回答：\n'+result.response+extra);toast('已成功发送问题并读取网页回答');}finally{testRunning=false;controls();}}));
+$('cancel-test').addEventListener('click',async()=>{try{await api('/api/browser/cancel',{});connection('正在取消连接测试…');}catch(e){toast(e.message,true);}});
 $('target-form').addEventListener('submit',e=>{e.preventDefault();action($('save-target'),async()=>{await api('/api/target',target());toast('目标配置已保存在本机');});});
 $('max-per-probe').addEventListener('change',estimate);
 $('start-scan').addEventListener('click',e=>action(e.currentTarget,async()=>{if(!selectedProbes().length)throw new Error('请至少选择一组探针');const result=await api('/api/jobs',{target:target(),probes:selectedProbes(),max_per_probe:Number($('max-per-probe').value)});selectedJob=result.id;lastDetail=null;toast('garak 安全检测已开始');}));
@@ -117,14 +130,13 @@ $('stop-scan').addEventListener('click',async()=>{try{await api('/api/jobs/'+sta
 document.querySelectorAll('[data-view]').forEach(b=>b.addEventListener('click',()=>showView(b.dataset.view)));
 document.querySelectorAll('.result-tab').forEach(b=>b.addEventListener('click',()=>setTab(b.dataset.tab)));
 document.querySelectorAll('.pick').forEach(b=>b.addEventListener('click',()=>action(b,async()=>{
-  if($('frame-selector').value.trim())throw new Error('iframe 页面请手动填写内部 CSS 选择器；点选仅支持主页面');
   clearInterval(pickTimer);await api('/api/browser/pick',{kind:b.dataset.kind});pickStarted=Date.now();
   connection('点选模式已开启。切换到登录浏览器，点击对应元素；按 Esc 可以取消。');toast('请切换到浏览器点击网页元素');
   let checking=false;
-  pickTimer=setInterval(async()=>{if(checking)return;checking=true;try{if(Date.now()-pickStarted>180000){clearInterval(pickTimer);connection('点选等待已结束。在浏览器按 Esc 退出，或再次点击点选。');return;}const r=await api('/api/browser/pick-result',{});if(r){clearInterval(pickTimer);if(r.cancelled){connection('已取消点选');return;}$(selectorFields[r.kind]).value=r.selector;connection('已选择 '+r.tag+'：'+r.selector+'\n请检查此选择器是否适用于后续新增的元素。');toast('选择器已填入');}}catch(e){clearInterval(pickTimer);toast(e.message,true);}finally{checking=false;}},1000);
+  pickTimer=setInterval(async()=>{if(checking)return;checking=true;try{if(Date.now()-pickStarted>180000){clearInterval(pickTimer);connection('点选等待已结束。在浏览器按 Esc 退出，或再次点击点选。');return;}const r=await api('/api/browser/pick-result',{});if(r){clearInterval(pickTimer);if(r.cancelled){connection('已取消点选');return;}$(selectorFields[r.kind]).value=r.selector;if(r.kind==='response')$('response-mode').value='selector';const frameField=r.kind==='launcher'?'launcher-frame-selector':'frame-selector';const changed=$(frameField).value!==(r.frame_selector||'');$(frameField).value=r.frame_selector||'';connection('已选择 '+r.tag+'：'+r.selector+'\n所属页面：'+(r.frame_selector||'主页面')+'\n请检查此选择器是否适用于后续新增的元素。'+(changed&&r.kind!=='launcher'?'\n聊天 iframe 已更新，请在同一个聊天页面点选其他输入、回答和按钮。':''));toast('选择器及 iframe 已填入');}}catch(e){clearInterval(pickTimer);toast(e.message,true);}finally{checking=false;}},1000);
 })));
 $('demo-button').addEventListener('click',e=>action(e.currentTarget,async()=>{
-  fillTarget({name:'本地模拟聊天网页',url:location.origin+'/demo?vulnerable=1',channel:'msedge',input_selector:'#chat-input',response_selector:'.assistant-message',send_selector:'#send-button',new_chat_selector:'#new-chat',busy_selector:'#stop-button',frame_selector:'',reset_each_prompt:true,timeout_s:30,stable_ms:700,min_response_ms:900,delay_s:0.2});
+  fillTarget({name:'本地模拟聊天网页',url:location.origin+'/demo?vulnerable=1',channel:'msedge',browser_mode:'standard',response_mode:'auto',input_selector:'#chat-input',response_selector:'.assistant-message',send_selector:'#send-button',new_chat_selector:'#new-chat',busy_selector:'#stop-button',frame_selector:'',launcher_selector:'',launcher_frame_selector:'',reset_each_prompt:true,timeout_s:30,stable_ms:700,min_response_ms:900,delay_s:0.2});
   const result=await api('/api/browser/open',target());connection('已打开本地模拟网页，无需登录。页面会故意输出探针标记，用于验证真实 garak 检测链路；不代表真实 AI 产品的安全性。');toast('模拟网页已打开，可以连接测试或开始检测');
 }));
 document.querySelectorAll('.download').forEach(b=>b.addEventListener('click',async()=>{

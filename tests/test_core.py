@@ -7,6 +7,26 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from settings import DEFAULT_TARGET, validate_target, validate_scan
 from reports import parse_report, build_html
+from response_reader import fresh_candidate
+
+
+class AnswerIdentityTests(unittest.TestCase):
+    def row(self, uid, text, document="page", score=80, order=0):
+        return {"id": uid, "document": document, "text": text, "score": score, "order": order}
+
+    def test_navigation_recreating_history_cannot_be_an_answer(self):
+        before = [self.row(1, "历史回答")]
+        self.assertIsNone(fresh_candidate(before, [self.row(2, "历史回答", document="navigated")]))
+
+    def test_stale_configured_region_cannot_beat_a_new_answer(self):
+        old = self.row(1, "历史回答", score=120)
+        new = self.row(2, "新的回答", score=80, order=1)
+        self.assertEqual(fresh_candidate([old], [old, new])["text"], "新的回答")
+
+    def test_identical_answers_in_new_message_nodes_are_fresh(self):
+        old = self.row(1, "相同回答")
+        new = self.row(2, "相同回答", order=1)
+        self.assertEqual(fresh_candidate([old], [old, new])["id"], 2)
 
 
 class ReportTests(unittest.TestCase):

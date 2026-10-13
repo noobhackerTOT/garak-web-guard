@@ -12,11 +12,11 @@ PROBES = [
 ]
 PROBE_IDS = {p["id"] for p in PROBES}
 DEFAULT_TARGET = {
-    "name": "我的网页 AI", "url": "", "channel": "msedge",
+    "name": "我的网页 AI", "url": "", "channel": "msedge", "browser_mode": "standard",
     "input_selector": 'textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"]',
-    "send_selector": "", "response_selector": '[data-message-author-role="assistant"]',
+    "send_selector": "", "response_selector": '[data-message-author-role="assistant"]', "response_mode": "auto",
     "new_chat_selector": "", "busy_selector": 'button[aria-label*="Stop"], button[aria-label*="停止"], button[data-testid="stop-button"]',
-    "frame_selector": "", "reset_each_prompt": False,
+    "frame_selector": "", "launcher_selector": "", "launcher_frame_selector": "", "reset_each_prompt": False,
     "timeout_s": 120, "stable_ms": 2500, "min_response_ms": 3500, "delay_s": 2,
 }
 
@@ -49,7 +49,11 @@ def validate_target(data):
         raise ValueError("请输入完整 http/https 网页地址，地址中不能包含账号密码")
     if target["channel"] not in {"msedge", "chrome", "chromium"}:
         raise ValueError("浏览器只能选择 Edge、Chrome 或 Chromium")
-    if not target["input_selector"] or not target["response_selector"]:
+    if target["browser_mode"] not in {"standard", "background"}:
+        raise ValueError("请选择常规浏览器或后台检测模式")
+    if target["response_mode"] not in {"auto", "selector"}:
+        raise ValueError("请选择自动识别或指定选择器读取回答")
+    if not target["input_selector"] or (target["response_mode"] == "selector" and not target["response_selector"]):
         raise ValueError("输入框和回答区域选择器不能为空")
     if not isinstance(target["reset_each_prompt"], bool):
         raise ValueError("新对话选项必须是布尔值")
