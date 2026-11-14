@@ -5,6 +5,12 @@
 )
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
+if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
+    throw '未找到 uv。请先安装 uv（https://docs.astral.sh/uv/），并准备 Python 3.12 的 garak 环境。'
+}
+if (-not (Test-Path -LiteralPath $GarakPython)) {
+    throw "找不到 garak Python：$GarakPython。请通过 -GarakPython 指定，例如 D:\garak\venv\Scripts\python.exe。"
+}
 $dependencyArgs = @('pip','install','--cache-dir',(Join-Path $PSScriptRoot '.runtime\uv-cache'),
     '--python',$GarakPython,'--target',(Join-Path $PSScriptRoot '.vendor'),
     '--index-url',$IndexUrl,'-r',(Join-Path $PSScriptRoot 'requirements-browser.txt'))

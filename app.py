@@ -26,6 +26,40 @@ from settings import DEFAULT_TARGET, PROBES, validate_target, validate_scan
 
 ANSI = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
+LOCAL_NAMES = ("127.0.0.1", "localhost")
+
+
+def host_matches_bind(host, port):
+    """True when Host is this process's loopback listener. HTTP port 80 may omit the port."""
+    if not isinstance(host, str):
+        return False
+    host = host.strip().lower()
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return False
+    if host in {f"{name}:{port}" for name in LOCAL_NAMES}:
+        return True
+    return port == 80 and host in LOCAL_NAMES
+
+
+def origin_matches_bind(origin, port):
+    """Missing Origin is allowed for local non-browser clients. Anything else must be this HTTP origin."""
+    if origin is None:
+        return True
+    if not isinstance(origin, str):
+        return False
+    origin = origin.strip().lower()
+    if origin == "":
+        return True
+    try:
+        port = int(port)
+    except (TypeError, ValueError):
+        return False
+    allowed = {f"http://{name}:{port}" for name in LOCAL_NAMES}
+    if port == 80:
+        allowed.update(f"http://{name}" for name in LOCAL_NAMES)
+    return origin in allowed
 
 
 def now():
@@ -67,18 +101,22 @@ class Console:
         for path in self.runs.glob("*/job.json"):
             try:
                 job = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(job, dict) or not isinstance(job.get("id"), str) or not job.get("created_at") or "status" not in job:
+                    continue
                 if job["status"] not in TERMINAL:
                     job.update(status="interrupted", error="上次服务退出时检测未完成", finished_at=now())
                     atomic_json(path, job)
                 self.jobs[job["id"]] = job
-            except (ValueError, OSError, KeyError):
+            except (ValueError, OSError, KeyError, TypeError):
                 continue
 
     def state(self):
         with self.lock:
+            jobs = [j for j in self.jobs.values() if isinstance(j, dict) and j.get("id") and j.get("created_at")]
+            jobs.sort(key=lambda x: str(x.get("created_at", "")), reverse=True)
             return {"garak": {"version": self.garak_version, "python": sys.executable},
                     "browser": self.browser.status(), "active_job": self.active,
-                    "jobs": [self.public(j) for j in sorted(self.jobs.values(), key=lambda x: x["created_at"], reverse=True)[:50]],
+                    "jobs": [self.public(j) for j in jobs[:50]],
                     "target": self.saved_target.copy(), "probes": PROBES}
 
     @staticmethod
@@ -145,10 +183,11 @@ class Console:
                 self.bridge_tokens[job_id] = secrets.token_urlsafe(32)
                 self.browser.cancel.clear()
                 self._save(job)
+                snapshot = self.public(job)
             self.save_target(config["target"])
             thread = threading.Thread(target=self._run, args=(job_id,), daemon=True, name="garak-runner")
             thread.start()
-            return self.public(job)
+            return snapshot
         finally:
             self.operations.release()
 
@@ -216,7 +255,19 @@ class Console:
             with self.lock:
                 job.update(status="cancelled" if job["cancel_requested"] else "failed", error=str(exc)[:2000])
         finally:
-            if job["cancel_requested"]:
+            self._finish_job(job_id)
+
+    def _finish_job(self, job_id):
+        """Write the report and always release the active-run slot."""
+        job = self.jobs.get(job_id)
+        if job is None:
+            if self.active == job_id:
+                self.active = None
+            return
+        directory = self.runs / job_id
+        report_path = directory / "garak.report.jsonl"
+        try:
+            if job.get("cancel_requested"):
                 try:
                     self.browser.call("idle", timeout=20)
                 except Exception:
@@ -224,14 +275,32 @@ class Console:
             with self.lock:
                 job["finished_at"] = now()
                 self.process = None
-                # Finalize artifacts before releasing the active-run reservation.
-                report = parse_report(report_path)
-                snapshot = self.public(job)
-                atomic_json(directory / "summary.json", {"job": snapshot, **report})
-                (directory / "report.html").write_text(build_html(snapshot, report), encoding="utf-8")
-                self._save(job)
+                try:
+                    report = parse_report(report_path)
+                    snapshot = self.public(job)
+                    html_doc = build_html(snapshot, report)
+                    atomic_json(directory / "summary.json", {"job": snapshot, **report})
+                    (directory / "report.html").write_text(html_doc, encoding="utf-8")
+                except Exception as exc:
+                    if not job.get("error"):
+                        job["error"] = ("结果整理失败：" + str(exc))[:2000]
+                    if job.get("status") not in TERMINAL:
+                        job["status"] = "cancelled" if job.get("cancel_requested") else "failed"
+                    try:
+                        atomic_json(directory / "summary.json", {"job": self.public(job), "error": job["error"]})
+                    except OSError:
+                        pass
+                try:
+                    self._save(job)
+                except OSError as exc:
+                    if not job.get("error"):
+                        job["error"] = ("结果保存失败：" + str(exc))[:2000]
+        finally:
+            with self.lock:
+                self.process = None
                 self.bridge_tokens.pop(job_id, None)
-                self.active = None
+                if self.active == job_id:
+                    self.active = None
 
     def stop(self, job_id):
         with self.lock:
@@ -307,12 +376,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def trusted(self):
         port = self.console.port
-        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
-        if self.headers.get("Host") not in allowed:
+        if not host_matches_bind(self.headers.get("Host"), port):
             self.reply(403, {"error": "仅允许本机访问"})
             return False
-        origin = self.headers.get("Origin")
-        if origin and origin not in {"http://" + h for h in allowed}:
+        if not origin_matches_bind(self.headers.get("Origin"), port):
             self.reply(403, {"error": "不允许跨站请求"})
             return False
         return True
@@ -446,9 +513,32 @@ class Handler(BaseHTTPRequestHandler):
             self.reply(400 if isinstance(exc, ValueError) else 500, {"error": str(exc)[:2000]})
 
 
+class GuardServer(ThreadingHTTPServer):
+    allow_reuse_address = True
+    daemon_threads = True
+
+
+def configure_stdio():
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
 def serve(port=8787, headless=False, open_browser=False):
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    server.daemon_threads = True
+    configure_stdio()
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise SystemExit("端口范围为 1–65535")
+    try:
+        server = GuardServer(("127.0.0.1", port), Handler)
+    except OSError as exc:
+        raise SystemExit(
+            f"无法在 127.0.0.1:{port} 启动，端口可能已被占用。请先运行 Stop.ps1，或执行 Start.ps1 -Port 其他端口。（{exc}）"
+        ) from None
     server.console = Console(headless=headless, port=server.server_port)
     atomic_json(RUNTIME / "server.json", {"pid": os.getpid(), "port": server.server_port})
     print(f"Garak Web Guard · http://127.0.0.1:{server.server_port}", flush=True)
@@ -473,9 +563,19 @@ def serve(port=8787, headless=False, open_browser=False):
         server.server_close()
 
 
+def parse_port(value):
+    try:
+        port = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("端口必须是整数") from None
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("端口范围为 1–65535")
+    return port
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="本机 garak 网页 AI 检测控制台")
-    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--port", type=parse_port, default=8787)
     parser.add_argument("--headless-browser", action="store_true", help="仅用于无需交互登录的测试网页")
     parser.add_argument("--open", action="store_true", help="启动时打开控制台")
     args = parser.parse_args()

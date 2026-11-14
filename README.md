@@ -15,6 +15,12 @@
 .\Start.ps1
 ```
 
+默认从清华 PyPI 镜像安装浏览器依赖。镜像不可用时：
+
+```powershell
+.\Install.ps1 -IndexUrl https://pypi.org/simple
+```
+
 已有 garak 环境位于其他路径时：
 
 ```powershell
@@ -101,5 +107,21 @@ Playwright 依赖安装在项目 `.vendor` 下，不修改已有 garak 安装。
 端到端测试使用真实 Edge 和真实 garak，对本地模拟网页验证：流式读取、元素点选、探针命中、问题上限、重复相同回答、连接超时、停止检测、报告下载、控制台交互、桌面/手机布局和接口访问保护。产物在 `.runtime/qa/`；真实网页仍需按上述步骤登录和适配。
 
 通用适配测试覆盖：未匹配示例选择器时自动识别回答、多段流式回答、无角色标记的回答容器学习、跨域入口 / 聊天 iframe、关闭面板后再次展开、嵌套 iframe 点选、开放 Shadow DOM、取消等待，以及生成状态结束后不误读历史回答。验证产物保存在 `.runtime/qa/embedded-verification.json`。真实 garak 回归测试会生成 `.runtime/qa/sample-report.html` 和 `.runtime/qa/verification.json`。测试状态和浏览器资料与正常使用的数据分开保存。
+
+不启动浏览器、也不要求本机已安装 garak 的单元测试：
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
+```
+
+`tests/e2e.py` 与 `tests/embedded_e2e.py` 不在上述发现范围内。推送和拉取请求会由 GitHub Actions 运行同一组单元测试。
+
+## 常见问题
+
+- **找不到 uv 或 garak Python**：先安装 [uv](https://docs.astral.sh/uv/) 和 Python 3.12，再按上文创建独立环境。路径不是 `D:\garak\venv` 时，`Install.ps1` 和 `Start.ps1` 都要带 `-GarakPython`。
+- **依赖下载失败**：安装脚本默认使用清华 PyPI 镜像。可改用 `.\Install.ps1 -IndexUrl https://pypi.org/simple`。
+- **端口被占用或刚退出又启动失败**：先运行 `Stop.ps1`。服务记录过期时，可删除 `.runtime\server.json`，或执行 `.\Start.ps1 -Port 8790`。
+- **浏览器打不开**：确认已安装 Edge 或 Chrome。两款都没有时，运行 `.\Install.ps1 -Chromium`，然后在控制台把浏览器改为 Playwright Chromium。
+- **控制台中文乱码**：`Start.ps1` 会为 Python 打开 UTF-8 输出。若直接运行 `python app.py`，请先设置 `PYTHONUTF8=1`。
 
 官方参考：[garak](https://github.com/NVIDIA/garak)、[function generator 源码](https://github.com/NVIDIA/garak/blob/main/garak/generators/function.py)。

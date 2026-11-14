@@ -22,6 +22,9 @@ DEFAULT_TARGET = {
 
 
 def bounded_number(value, low, high, label, integral=False):
+    # bool is an int subclass; float(True) == 1.0 would silently pass numeric limits.
+    if isinstance(value, bool):
+        raise ValueError(f"{label}必须是数字")
     try:
         value = float(value)
     except (ValueError, TypeError):
@@ -41,6 +44,8 @@ def validate_target(data):
         if isinstance(DEFAULT_TARGET[key], str):
             if not isinstance(value, str) or len(value) > 2000:
                 raise ValueError(f"{key}格式错误或过长")
+            if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+                raise ValueError(f"{key}包含无效控制字符")
             target[key] = value.strip()
     if len(target["name"]) > 100:
         raise ValueError("目标名称不能超过 100 个字符")
