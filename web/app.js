@@ -5,7 +5,7 @@ const terminal = new Set(['completed','failed','cancelled','interrupted']);
 const statuses = {preparing:'准备中',running:'检测中',stopping:'停止中',completed:'已完成',failed:'检测未完成',cancelled:'已停止',interrupted:'上次运行中断'};
 const selectorFields = {input:'input-selector',response:'response-selector',send:'send-selector',new_chat:'new-chat-selector',busy:'busy-selector',launcher:'launcher-selector'};
 let state = null, selectedJob = null, busyCount = 0, polling = false, initialized = false, selectedTab = 'results';
-let toastTimer, pickTimer, pickStarted = 0, lastDetail = null, testRunning = false;
+let toastTimer, pickTimer, pickStarted = 0, lastDetail = null, testRunning = false, lastPollError = 0;
 const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 async function api(path, data) {
@@ -65,7 +65,10 @@ function showView(name) {
 function renderHistory() {
   const jobs=state?.jobs||[]; $('history-count').textContent=jobs.length;
   if(!jobs.length){$('history-list').innerHTML='<div class="empty-state"><div class="empty-icon">◷</div><strong>还没有检测记录</strong><p>完成第一轮检测后，报告会显示在这里。</p></div>';return;}
-  $('history-list').innerHTML=jobs.map(j=>`<div class="history-row"><div class="history-info"><strong>${esc(j.config.target.name)} ${j.demo?'· 本地模拟':''}</strong><p>${esc(new Date(j.created_at).toLocaleString('zh-CN'))} · ${j.answered} 个回答 · ${esc(j.config.target.url)}</p></div><span class="badge ${badge(j.status)}">${esc(statuses[j.status]||j.status)}</span><button class="button outline open-job" data-id="${esc(j.id)}">查看报告 ↗</button></div>`).join('');
+  $('history-list').innerHTML=jobs.map(j=>{
+    const name=j.config?.target?.name||'未命名目标', url=j.config?.target?.url||'';
+    return `<div class="history-row"><div class="history-info"><strong>${esc(name)} ${j.demo?'· 本地模拟':''}</strong><p>${esc(new Date(j.created_at).toLocaleString('zh-CN'))} · ${j.answered??0} 个回答 · ${esc(url)}</p></div><span class="badge ${badge(j.status)}">${esc(statuses[j.status]||j.status||'')}</span><button class="button outline open-job" data-id="${esc(j.id)}">查看报告 ↗</button></div>`;
+  }).join('');
   document.querySelectorAll('.open-job').forEach(b=>b.addEventListener('click',async()=>{selectedJob=b.dataset.id;lastDetail=null;showView('workspace');await refreshDetail();$('results-content').scrollIntoView({behavior:'smooth',block:'center'});}));
 }
 function setTab(tab) {selectedTab=tab;$('logs-content').hidden=tab!=='logs';$('results-content').hidden=tab!=='results';document.querySelectorAll('.result-tab').forEach(b=>b.classList.toggle('selected',b.dataset.tab===tab));}
@@ -73,22 +76,22 @@ function renderDetail(detail) {
   lastDetail=detail; const {job,summary,attempts}=detail;
   $('metric-tested').textContent=summary.evaluated;
   $('metric-flagged').textContent=summary.flagged; $('metric-flagged').style.color=summary.flagged?'#b7774d':'';
-  $('metric-errors').textContent=job.errors;
-  $('metric-status').textContent=`${statuses[job.status]||job.status} · ${job.answered} 个网页回答`;
+  $('metric-errors').textContent=job.errors??0;
+  $('metric-status').textContent=`${statuses[job.status]||job.status||''} · ${job.answered??0} 个网页回答`;
   $('job-badge').className='badge '+badge(job.status);$('job-badge').textContent=(job.demo?'模拟 · ':'')+(statuses[job.status]||job.status);
   $('job-info').hidden=false;$('job-info').classList.toggle('error',Boolean(job.error));
-  const context=job.config.target.reset_each_prompt?'每题新对话':'连续对话';
+  const context=job.config?.target?.reset_each_prompt?'每题新对话':'连续对话';
   const progress=job.current_probe?` · 当前：${job.current_probe}`:'';
-  $('job-info').textContent=`${job.demo?'本地模拟网页 · ':''}${job.config.target.name} · ${context} · 已发送 ${job.sent} / 已回答 ${job.answered}${progress}${job.error?' · '+job.error:''}`;
+  $('job-info').textContent=`${job.demo?'本地模拟网页 · ':''}${job.config?.target?.name||'未命名目标'} · ${context} · 已发送 ${job.sent??0} / 已回答 ${job.answered??0}${progress}${job.error?' · '+job.error:''}`;
   $('rate-note').textContent=summary.no_signal_rate===null?'等待检测器判定':`未命中比例 ${summary.no_signal_rate}% · ${summary.unevaluated} 项待判定`;
   if(!attempts.length) {
     $('results-content').innerHTML=`<div class="empty-state"><div class="empty-icon">${terminal.has(job.status)?'◎':'⌁'}</div><strong>${terminal.has(job.status)?'本次没有已判定记录':'正在收集网页回答'}</strong><p>${terminal.has(job.status)?'可查看运行日志定位连接或检测问题。':'garak 会在每组回答收集完成后执行检测器。'}</p></div>`;
   } else {
     const opened=new Set([...document.querySelectorAll('.result-row[open]')].map(x=>x.dataset.id));
-    const labels=Object.fromEntries(state.probes.map(p=>[p.id,p.label]));
+    const labels=Object.fromEntries((state?.probes||[]).map(p=>[p.id,p.label]));
     $('results-content').innerHTML=attempts.map((r,i)=>`<details class="result-row" data-id="${esc(r.id)}" ${opened.has(r.id)?'open':''}><summary><span class="row-index">${String(i+1).padStart(2,'0')}</span><span class="row-title">${esc(labels[r.probe]||r.probe)}<small>${esc(r.probe)}</small></span><span class="row-marker ${r.flagged?'hit':r.evaluated?'':'pending'}">${r.flagged?'◉ 疑似风险 · 需复核':r.evaluated?'○ 本项未命中':'◌ 等待判定'} ↗</span></summary><div class="row-body"><h3>测试问题</h3><pre>${esc(r.prompt)}</pre><h3>网页回答</h3><pre class="response">${esc(r.outputs.join('\n'))}</pre><h3>检测器分值 · ≥ 0.5 为命中</h3><pre>${esc(JSON.stringify(r.detectors,null,2))}</pre></div></details>`).join('');
   }
-  const logs=job.logs.join('\n')||'正在启动 garak…';
+  const logs=(job.logs||[]).join('\n')||'正在启动 garak…';
   if($('logs-content').textContent!==logs){const nearBottom=$('logs-content').scrollHeight-$('logs-content').scrollTop-$('logs-content').clientHeight<60;$('logs-content').textContent=logs;if(nearBottom)$('logs-content').scrollTop=$('logs-content').scrollHeight;}
   setTab(selectedTab);controls();
 }
@@ -107,7 +110,10 @@ async function poll() {
     if(testRunning&&state.browser.busy&&state.browser.phase)connection(`${state.browser.phase} · ${state.browser.elapsed_s} 秒 / ${Number($('timeout').value)} 秒\n当前找到 ${state.browser.answer_candidates} 个回答候选。可以取消后重新点选回答区域。`);
     if(state.active_job&&!selectedJob)selectedJob=state.active_job;
     renderHistory();await refreshDetail();controls();
-  } catch(e){if(!initialized)toast('无法连接本地服务：'+e.message,true);}finally{polling=false;}
+  } catch(e){
+    const message=(initialized?'控制台刷新失败：':'无法连接本地服务：')+e.message;
+    if(!initialized || Date.now()-lastPollError>10000){lastPollError=Date.now();toast(message,true);}
+  }finally{polling=false;}
 }
 
 $('open-browser').addEventListener('click',e=>action(e.currentTarget,async()=>{const s=await api('/api/browser/open',target());connection('浏览器已打开。请在新窗口完成登录并进入聊天页面，然后检查选择器。\n当前地址：'+s.url);toast('请在独立浏览器窗口完成登录');}));

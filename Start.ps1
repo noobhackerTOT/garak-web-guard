@@ -5,6 +5,8 @@
 )
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
+$env:PYTHONIOENCODING = 'utf-8'
+$env:PYTHONUTF8 = '1'
 if (-not (Test-Path -LiteralPath $GarakPython)) {
     throw '找不到 garak Python，请通过 -GarakPython 指定已有 garak 环境。'
 }

@@ -40,7 +40,19 @@ AUTO_SCRIPT = r"""(body, options) => {
 }"""
 
 
+def _usable_row(row):
+    return isinstance(row, dict) and "document" in row and "id" in row and isinstance(row.get("text"), str)
+
+
+def _rank(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return value
+
+
 def fresh_candidate(before, current):
+    before = [r for r in before if _usable_row(r)]
+    current = [r for r in current if _usable_row(r)]
     old = {(r["document"], r["id"]): r["text"] for r in before}
     old_texts = {r["text"] for r in before}
     old_documents = {r["document"] for r in before}
@@ -55,4 +67,4 @@ def fresh_candidate(before, current):
             candidates.append(row)
     if not candidates:
         return None
-    return max(candidates, key=lambda r: (r["score"], r["order"]))
+    return max(candidates, key=lambda r: (_rank(r.get("score")), _rank(r.get("order"))))

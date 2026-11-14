@@ -382,6 +382,7 @@ class BrowserWorker:
         changed_at = started
         blank_ids = set()
         detected_selector = ""
+        snapshots = []
         while time.monotonic() - started < target["timeout_s"]:
             if self.cancel.is_set():
                 raise InterruptedError("检测已停止，当前网页生成可能仍在进行")

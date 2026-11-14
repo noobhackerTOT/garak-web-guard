@@ -54,7 +54,7 @@ def launch_standard(playwright, channel, profile, headless=False, background=Fal
                 if isinstance(exc, ValueError):
                     raise
                 time.sleep(0.15)
-        raise TimeoutError("常规浏览器连接超时，可切换自动化浏览器模式重试")
+        raise TimeoutError("常规浏览器连接超时。请确认 Edge 或 Chrome 已安装；若没有，可运行 Install.ps1 -Chromium，并在控制台改用 Playwright Chromium")
     except Exception:
         if process.poll() is None:
             process.terminate()

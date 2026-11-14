@@ -5,7 +5,11 @@ $serverState = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
 $servicePort = [int]$serverState.port
 if ($servicePort -lt 1 -or $servicePort -gt 65535) { throw '服务端口记录无效。' }
 $baseUri = "http://127.0.0.1:$servicePort"
-$response = Invoke-WebRequest -UseBasicParsing -Uri "$baseUri/" -TimeoutSec 10
+try {
+    $response = Invoke-WebRequest -UseBasicParsing -Uri "$baseUri/" -TimeoutSec 10
+} catch {
+    throw "无法连接 $baseUri。服务可能已经关闭。若 .runtime\server.json 已过期，删除该文件后重新启动。$($_.Exception.Message)"
+}
 $match = [regex]::Match($response.Content, 'name="console-token" content="([^"]+)"')
 if (-not $match.Success) { throw '此端口不是 Garak Web Guard 控制台。' }
 $headers = @{ 'X-Console-Token' = $match.Groups[1].Value }
